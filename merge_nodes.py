@@ -1,9 +1,14 @@
+'''
+Merge nodes to sets, so that any two nodes in the same set has a manhattan distance < radius.
+First we generate a dict of neighbor nodes: neighbor_sets, and store them into neighbor_info_r{radius}.p using pickle
+Then we merge nodes based on the neighbor info
+
+'''
 import pandas as pd
 import sqlite3
 import pickle
 from utils import manhattan
 from tqdm import tqdm
-
 radius = 200 #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< change parameter here
 # connect sqlite and create index
 conn = sqlite3.connect('unified_network.db')
@@ -13,7 +18,7 @@ cur.execute('''CREATE INDEX IF NOT EXISTS index_Y ON nodes(Y)''')
 cur.execute('''CREATE INDEX IF NOT EXISTS index_XY ON nodes(X, Y)''')
 cur.execute('''CREATE INDEX IF NOT EXISTS index_new_id ON nodes(new_ID)''') # create index to speedup searching
 # get data from db
-node_data = pd.read_sql("SELECT * FROM nodes WHERE NOT type='waterway'", conn)
+node_data = pd.read_sql("SELECT * FROM nodes", conn)
 node_data.set_index('new_ID', inplace=True)
 if not ('set_id' in node_data.columns):
     cur.execute('''ALTER TABLE nodes ADD set_id INTEGER DEFAULT -1''')
@@ -46,7 +51,7 @@ except:
         sql_find_neighbor_one_node = '''
                     SELECT * FROM nodes
                     WHERE new_ID > {0} AND
-                    X >= {1} AND X <= {2} AND Y >= {3} AND Y <= {4} AND (NOT type='waterway‘);
+                    X >= {1} AND X <= {2} AND Y >= {3} AND Y <= {4};
                 '''.format(node_id, x_lb, x_ub, y_lb, y_ub) # only contains node_id>current_node_id
         neighbor_nodes = pd.read_sql(sql_find_neighbor_one_node, conn)
         neighbor_sets[node_id] = neighbor_nodes['new_ID'].tolist()
@@ -86,13 +91,24 @@ while update:
     print('\n merges:',number_merges)
 
 
-print('record changes to db')
-for idx in tqdm(node_data.index):
-    node_data.loc[idx,'set_id'] = id_to_setid[idx]
-    cur.execute('''UPDATE nodes SET set_id = {0} WHERE new_ID = {1};'''.format(id_to_setid[idx], idx))
-conn.commit()
+print('record changes to csv')
+set_info_df = pd.DataFrame.from_dict(id_to_setid, orient='index', columns=['set_id'])
+set_info_df.index.name='new_ID'
+node_data.update(set_info_df)
 node_data.to_csv('updated_nodes_with_sets.csv')
+# update the set_id in nodes in the db
+print('update set_id in db')
+node_data_slice = node_data[['set_id']].reset_index()
+node_data_slice.to_sql('tmp', conn, if_exists='replace')
+cur.execute('''CREATE INDEX IF NOT EXISTS index_tmp_new_id ON tmp(new_ID) ''')
+sql_update_set = '''
+UPDATE nodes SET set_id = tmp.set_id
+FROM tmp
+WHERE tmp.new_ID = nodes.new_ID
+'''
+cur.execute(sql_update_set)
+conn.commit()
 conn.close()
 
-print('number of nodes:', node_data.columns[0])
+print('number of nodes:', node_data.shape[0])
 print('number of sets:',node_data['set_id'].nunique())
