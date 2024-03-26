@@ -1,0 +1,66 @@
+import pandas as pd
+import sqlite3
+from tqdm import tqdm
+from pyproj import CRS
+from pyproj import Transformer
+
+conn = sqlite3.connect('unified_network.db')
+cur = conn.cursor()
+
+############## All_nodes
+cur.execute('''CREATE INDEX IF NOT EXISTS index_X1 ON nodes(X)''')
+cur.execute('''CREATE INDEX IF NOT EXISTS index_Y1 ON nodes(Y)''')
+cur.execute('''CREATE INDEX IF NOT EXISTS index_new_id1 ON nodes(new_ID)''') # create index to speedup searching
+
+node_data = pd.read_sql("SELECT * FROM nodes", conn)
+node_data.set_index('new_ID', inplace=True)
+transformer = Transformer.from_crs(102100, 4326) #Transform fro WIKID 102100 to lat/lon
+
+for node_id in tqdm(node_data.index): #Run through all nodes in Table nodes
+    if node_data.loc[node_id, 'type'] == 'waterway':
+      continue
+    x_old = node_data.loc[node_id, 'X']
+    y_old = node_data.loc[node_id, 'Y']
+    lat,lon = transformer.transform(x_old,y_old)
+    cur.execute("UPDATE nodes SET Y = ? WHERE new_ID = ?", (lat,node_id))
+    cur.execute("UPDATE nodes SET X = ? WHERE new_ID = ?", (lon,node_id))
+
+node_data.to_csv('nodes_lat_lon.csv')
+
+############## Rail_nodes
+cur.execute('''CREATE INDEX IF NOT EXISTS index_X2 ON rail_nodes(X)''')
+cur.execute('''CREATE INDEX IF NOT EXISTS index_Y2 ON rail_nodes(Y)''')
+cur.execute('''CREATE INDEX IF NOT EXISTS index_new_id2 ON rail_nodes(new_ID)''') # create index to speedup searching
+
+railnode_data = pd.read_sql("SELECT * FROM rail_nodes", conn)
+railnode_data.set_index('new_ID', inplace=True)
+
+for node_id in tqdm(railnode_data.index): #Run through all nodes in Table rail_nodes
+    x_old = railnode_data.loc[node_id, 'X']
+    y_old = railnode_data.loc[node_id, 'Y']
+    lat,lon = transformer.transform(x_old,y_old)
+    cur.execute("UPDATE rail_nodes SET Y = ? WHERE new_ID = ?", (lat,node_id))
+    cur.execute("UPDATE rail_nodes SET X = ? WHERE new_ID = ?", (lon,node_id))
+
+railnode_data.to_csv('rail_nodes_lat_lon.csv')
+
+############## Road_nodes
+cur.execute('''CREATE INDEX IF NOT EXISTS index_X3 ON road_nodes(x)''')
+cur.execute('''CREATE INDEX IF NOT EXISTS index_Y3 ON road_nodes(y)''')
+cur.execute('''CREATE INDEX IF NOT EXISTS index_new_id3 ON road_nodes(new_ID)''') # create index to speedup searching
+
+roadnode_data = pd.read_sql("SELECT * FROM road_nodes", conn)
+roadnode_data.set_index('new_ID', inplace=True)
+
+for node_id in tqdm(roadnode_data.index): #Run through all nodes in Table road_nodes
+    x_old = roadnode_data.loc[node_id, 'x']
+    y_old = roadnode_data.loc[node_id, 'y']
+    lat,lon = transformer.transform(x_old,y_old)
+    cur.execute("UPDATE road_nodes SET y = ? WHERE new_ID = ?", (lat,node_id))
+    cur.execute("UPDATE road_nodes SET x = ? WHERE new_ID = ?", (lon,node_id))
+
+roadnode_data.to_csv('road_nodes_lat_lon.csv')
+
+
+conn.commit()
+conn.close()
